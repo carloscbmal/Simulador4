@@ -81,6 +81,7 @@ def executar_simulacao_quadro(df_input, vagas_limite_base, data_alvo, tempo_apos
 
     historicos = {m: [] for m in matriculas_foco} if matriculas_foco else {}
     df_inativos = pd.DataFrame()
+    sobras_por_ciclo = {}
 
     for data_referencia in datas_ciclo:
         sobras_deste_ciclo = {}
@@ -109,8 +110,14 @@ def executar_simulacao_quadro(df_input, vagas_limite_base, data_alvo, tempo_apos
                     df.at[idx, 'Excedente'] = ""
                     vagas_disponiveis -= 1
                     promoveu = True
+                
                 if promoveu and militar['Matricula'] in historicos:
                     historicos[militar['Matricula']].append(f"✅ {data_referencia.strftime('%d/%m/%Y')}: Promovido a {proximo_posto}")
+
+            if vagas_disponiveis > 0:
+                sobras_deste_ciclo[proximo_posto] = int(vagas_disponiveis)
+        
+        sobras_por_ciclo[data_referencia] = sobras_deste_ciclo
 
         # B) ABSORÇÃO
         for posto in HIERARQUIA:
@@ -120,26 +127,31 @@ def executar_simulacao_quadro(df_input, vagas_limite_base, data_alvo, tempo_apos
                 excedentes = df[(df['Posto_Graduacao'] == posto) & (df['Excedente'] == "x")].sort_values('Pos_Hierarquica')
                 for idx_exc in excedentes.head(int(vagas_abertas)).index:
                     df.at[idx_exc, 'Excedente'] = ""
+                    m_id = df.at[idx_exc, 'Matricula']
+                    if m_id in historicos:
+                        historicos[m_id].append(f"ℹ️ {data_referencia.strftime('%d/%m/%Y')}: Ocupou vaga comum em {posto}")
 
-        # C) APOSENTADORIA (CORREÇÃO TYPEERROR)
-        # Convertemos explicitamente para numérico para evitar conflito de tipos no Pandas
+        # C) APOSENTADORIA (CORREÇÃO DE TYPEERROR)
         idade = pd.to_numeric(df['Data_Nascimento'].apply(lambda x: get_anos(data_referencia, x)))
         servico = pd.to_numeric(df['Data_Admissao'].apply(lambda x: get_anos(data_referencia, x)))
-        
         mask_apo = (idade >= 63) | (servico >= tempo_aposentadoria)
         
         if mask_apo.any():
-            df_inativos = pd.concat([df_inativos, df[mask_apo].copy()], ignore_index=True)
+            militares_aposentando = df[mask_apo]
+            for m_foco in historicos:
+                if m_foco in militares_aposentando['Matricula'].values:
+                    historicos[m_foco].append(f"🛑 {data_referencia.strftime('%d/%m/%Y')}: APOSENTADO")
+            df_inativos = pd.concat([df_inativos, militares_aposentando.copy()], ignore_index=True)
             df = df[~mask_apo].copy()
 
-    return df, df_inativos, historicos, {}
+    return df, df_inativos, historicos, sobras_por_ciclo
 
 # ==========================================
-# INTERFACE
+# INTERFACE STREAMLIT
 # ==========================================
 
 def main():
-    st.set_page_config(page_title="Simulador Multi-Quadros", layout="wide")
+    st.set_page_config(page_title="Simulador de Promoções", layout="wide")
     st.title("🎖️ Simulador de Promoção Militar")
 
     df_militares = carregar_dados('militares.xlsx')
@@ -147,12 +159,29 @@ def main():
     df_musicos = carregar_dados('musicos.xlsx')
 
     st.sidebar.header("⚙️ Configuração")
-    tipo_simulacao = st.sidebar.radio("Quadro:", ("QOA/QPC", "QOMT/QPMT", "QOM/QPM"))
+    tipo_simulacao = st.sidebar.radio("Quadro:", ("QOA/QPC (Administrativo)", "QOMT/QPMT (Condutores)", "QOM/QPM (Músicos)"))
 
-    df_ativo = df_militares if tipo_simulacao == "QOA/QPC" else (df_condutores if tipo_simulacao == "QOMT/QPMT" else df_musicos)
+    # Define o dataframe ativo com base na escolha
+    if tipo_simulacao == "QOA/QPC (Administrativo)":
+        df_ativo = df_militares
+        has_aux = (df_condutores is not None) and (df_musicos is not None)
+    elif tipo_simulacao == "QOMT/QPMT (Condutores)":
+        df_ativo = df_condutores
+        has_aux = False
+    else:
+        df_ativo = df_musicos
+        has_aux = False
 
     if df_ativo is not None:
-        # --- DATA LIMITE PARA FINAL DE 2060 ---
+        # SELEÇÃO DE MATRÍCULAS (RESTAURADO)
+        lista_matriculas = sorted(df_ativo['Matricula'].dropna().unique().astype(int))
+        matriculas_foco = st.sidebar.multiselect(
+            "Matrículas para acompanhar:",
+            options=lista_matriculas,
+            max_selections=5
+        )
+
+        # DATA LIMITE 2060
         data_alvo_input = st.sidebar.date_input(
             "Data Alvo:", 
             value=datetime(2030, 12, 31),
@@ -162,18 +191,59 @@ def main():
         
         if st.sidebar.button("🚀 Iniciar Simulação"):
             data_alvo = pd.to_datetime(data_alvo_input)
-            with st.spinner('Processando...'):
-                df_final, df_inativos, _, _ = executar_simulacao_quadro(df_ativo, VAGAS_QOA if tipo_simulacao == "QOA/QPC" else (VAGAS_QOMT if tipo_simulacao == "QOMT/QPMT" else VAGAS_QOM), data_alvo, tempo_aposentadoria, [])
+            
+            with st.spinner('Simulando...'):
+                # Lógica para QOA com migração de vagas
+                if tipo_simulacao == "QOA/QPC (Administrativo)":
+                    vagas_migradas = {}
+                    if df_condutores is not None:
+                        _, _, _, s_cond = executar_simulacao_quadro(df_condutores, VAGAS_QOMT, data_alvo, tempo_aposentadoria, [])
+                        for d, v in s_cond.items():
+                            vagas_migradas[d] = v
+                    if df_musicos is not None:
+                        _, _, _, s_mus = executar_simulacao_quadro(df_musicos, VAGAS_QOM, data_alvo, tempo_aposentadoria, [])
+                        for d, v in s_mus.items():
+                            if d not in vagas_migradas: vagas_migradas[d] = {}
+                            for p, q in v.items():
+                                mq = q if p in ['SD 1', 'CB', '3º SGT', '2º SGT', '1º SGT', 'SUB TEN'] else math.ceil(q/2)
+                                vagas_migradas[d][p] = vagas_migradas[d].get(p, 0) + mq
+                    
+                    df_final, df_inativos, historicos, _ = executar_simulacao_quadro(df_ativo, VAGAS_QOA, data_alvo, tempo_aposentadoria, matriculas_foco, vagas_migradas)
                 
+                else:
+                    vagas_base = VAGAS_QOMT if "Condutores" in tipo_simulacao else VAGAS_QOM
+                    df_final, df_inativos, historicos, _ = executar_simulacao_quadro(df_ativo, vagas_base, data_alvo, tempo_aposentadoria, matriculas_foco)
+
                 st.success("Simulação Concluída!")
-                
+
+                # EXIBIÇÃO DE HISTÓRICOS EM ABAS (RESTAURADO)
+                if matriculas_foco:
+                    st.subheader("📊 Histórico Individual")
+                    abas = st.tabs([str(m) for m in matriculas_foco])
+                    for i, m in enumerate(matriculas_foco):
+                        with abas[i]:
+                            if not historicos[m]:
+                                st.info("Sem alterações relevantes no período.")
+                            for evento in historicos[m]:
+                                st.write(evento)
+                            
+                            if m in df_final['Matricula'].values:
+                                status = df_final[df_final['Matricula'] == m].iloc[0]
+                                st.success(f"Status Final: {status['Posto_Graduacao']} {'(Excedente)' if status['Excedente'] == 'x' else ''}")
+                            else:
+                                st.warning("Status Final: Aposentado / Reserva")
+
+                # DOWNLOADS
                 def to_excel(df):
                     out = io.BytesIO()
                     df.to_excel(out, index=False, engine='xlsxwriter')
                     return out.getvalue()
                 
-                st.download_button("📥 Baixar Resultado (Ativos)", to_excel(df_final), "Ativos_Simulacao.xlsx")
-                st.download_button("📥 Baixar Resultado (Inativos)", to_excel(df_inativos), "Inativos_Simulacao.xlsx")
+                c1, c2 = st.columns(2)
+                c1.download_button("📥 Baixar Ativos", to_excel(df_final), "Ativos_Final.xlsx")
+                c2.download_button("📥 Baixar Inativos", to_excel(df_inativos), "Inativos_Final.xlsx")
+    else:
+        st.error("Arquivos Excel não encontrados. Certifique-se de que os arquivos .xlsx estão na pasta.")
 
 if __name__ == "__main__":
     main()
