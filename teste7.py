@@ -15,7 +15,7 @@ HIERARQUIA = ['SD 1', 'CB', '3º SGT', '2º SGT', '1º SGT', 'SUB TEN',
 
 TEMPO_MINIMO = {
     'SD 1': 5, 'CB': 3, '3º SGT': 3, '2º SGT': 3, '1º SGT': 2,
-    'SUB TEN': 2, '2º TEN': 3, '1º TEN': 3, 'CAP': 3, 'MAJ': 3, 'TEN CEL': 30
+    'SUB TEN': 2, '2º TEN': 3, '1º TEN': 3, 'CAP': 3, 'MAJ': 2, 'TEN CEL': 30
 }
 
 POSTOS_COM_EXCEDENTE = ['CB', '3º SGT', '2º SGT', '2º TEN', '1º TEN', 'CAP']
@@ -26,13 +26,13 @@ VAGAS_QOA = {
 }
 
 VAGAS_QOMT = {
-    'SD 1': 999, 'CB': 999, '3º SGT': 999,
+    'SD 1': 30, 'CB': 30, '3º SGT': 30,
     '2º SGT': 68, '1º SGT': 49, 'SUB TEN': 19, 
     '2º TEN': 14, '1º TEN': 11, 'CAP': 8, 'MAJ': 4, 'TEN CEL': 2, 'CEL': 0
 }
 
 VAGAS_QOM = {
-    'SD 1': 999, 'CB': 999,
+    'SD 1': 30, 'CB': 30,
     '3º SGT': 1, '2º SGT': 13, '1º SGT': 10, 'SUB TEN': 5, 
     '2º TEN': 11, '1º TEN': 9, 'CAP': 6, 'MAJ': 4, 'TEN CEL': 2, 'CEL': 0
 }
